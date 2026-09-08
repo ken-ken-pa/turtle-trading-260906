@@ -1,0 +1,235 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+  // 環境変数からDB接続URLを取得
+  // url      = env("DATABASE_URL")
+}
+
+// ===== 既存モデル（NextAuth標準・ほぼ踏襲） =====
+
+model User {
+  id                 String             @id @default(uuid())
+  name               String?
+  email              String             @unique
+  emailVerified      DateTime?
+  image              String?
+  password           String?
+  created_at         DateTime           @default(now())
+  updated_at         DateTime           @updatedAt
+  accounts           Account[]
+  sessions           Session[]
+  userSetting        UserSetting?
+  watchlists         Watchlist[]
+  watchlistHistories WatchlistHistory[]
+  batchJobs          BatchJob[]
+}
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId]) // 検索高速化のためのインデックス
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId]) // 検索高速化のためのインデックス
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ===== ユーザー設定 =====
+// 足種別・戦略設定(entry/exit/ATR)・Long Profit集計対象期間は
+// 「ウォッチリスト」機能が計算に用いる“正”の設定値（全銘柄共通・1つ）。
+// splitCount・period（チャート表示期間）は「ダッシュボード」が管理する見た目専用の設定。
+// autoRefreshTime以降は新機能（1日1回の自動再取得）用の設定。
+model UserSetting {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // ── ウォッチリスト管理：シグナル計算・Long Profit集計の“正”の設定（全銘柄共通） ──
+  entryDays         Int    @default(20)
+  exitDays          Int    @default(10)
+  atrDays           Int    @default(20)
+  interval          String @default("1d") // 1d/1wk/1mo。ダッシュボードでは表示専用でここを参照するのみ
+  aggregationPeriod String @default("6mo") // Long Profit集計・シグナル判定の対象期間（1mo/3mo/6mo/1y/3y/max）
+
+  // ── ダッシュボード管理：見た目専用設定 ──
+  splitCount Int    @default(1) // 1(全画面)/2(2分割)/4(4分割)のみ
+  period     String @default("6mo") // チャートの表示期間（見た目のみ、集計には使わない）
+
+  // ── 1日1回・指定時刻の自動再取得（ブラウザ主導。Cron・メール通知は廃止） ──
+  autoRefreshTime     String?   // "HH:mm"形式。未設定(null)の場合は自動再取得を使わない
+  lastAutoRefreshDate DateTime? @db.Date // 直近で自動再取得を実行済みの日付（本日分の未実行判定に使用）
+
+  // ── ウォッチリストの列ソート状態（リロード・再ログイン・別端末でも維持するためDBへ保存） ──
+  // watchlistSortKeyがnullの場合は「ソートなし」＝手動並べ替えのベース順（Watchlist.sortOrder順）で表示
+  watchlistSortKey       String? // 'symbol' | 'name' | 'selected' | 'signalType' | 'signalDate' | 'signalPrice' | 'profitCount' | 'profitWinRate' | 'profitTotalProfit'
+  watchlistSortDirection String  @default("desc") // 'asc' | 'desc'
+
+  updated_at DateTime @updatedAt
+}
+
+// ===== ウォッチリスト（新仕様の起点） =====
+// 初期セットは日経225全銘柄。ユーザーは任意銘柄を追加・削除可能。
+// sortOrder ＝ 手動並べ替えの「ベース順」。
+//   - 列ソート（降順→昇順→ソートなし）は表示上の一時的な並び替えであり、
+//     「ソートなし」に戻すとこのsortOrder順に戻る。
+//   - ダッシュボード内でのチャート位置入れ替え（ドラッグ&ドロップ）は、
+//     対象2銘柄のsortOrderを入れ替える形でここに書き戻す。
+// dashboardSelected ＝ ダッシュボードに表示するチェック状態。
+// profit*系 ＝「Long Profit集計取得」の最新結果（上書き保存、履歴はWatchlistHistoryで別管理）。
+model Watchlist {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbol     String
+  name       String?
+  sortOrder  Int      @default(0)
+  dashboardSelected Boolean @default(false)
+
+  // Long Profit集計の最新結果（未計算 or クリア後はすべてnull）
+  profitCount       Int?
+  profitTotalProfit Float?
+  profitAvgProfit   Float?
+  profitWins        Int?
+  profitLosses      Int?
+  profitDraws       Int?
+  profitWinRate     Float?
+  profitCalculatedAt DateTime?
+
+  // 最新シグナル（「最新シグナル取得」ボタンをクリックした取引日＝JST 9:00～翌8:59の区切りで
+  // 発生したシグナルのみを表示する。該当日にシグナルが発生していなければnullでクリアされる）
+  latestSignalType  String?
+  latestSignalDate  DateTime?
+  latestSignalPrice Float?
+
+  created_at DateTime        @default(now())
+  signals    SignalHistory[]
+
+  @@unique([userId, symbol])
+  @@index([userId]) // ユーザーごとの一覧表示高速化
+  @@index([userId, sortOrder]) // 並び順取得の高速化
+}
+
+// シグナル履歴（監査ログ用。一覧表示は Watchlist.latestSignalType/Date/Price を直接参照する）
+// source: どの経路で検出されたシグナルかを区別（手動ボタン / 1日1回自動再取得）
+enum SignalSource {
+  MANUAL
+  AUTO_DAILY
+}
+
+model SignalHistory {
+  id          String       @id @default(uuid())
+  watchlistId String
+  watchlist   Watchlist    @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+  type        String // 'LONG_ENTRY' | 'EXIT_LONG'
+  price       Float
+  date        DateTime
+  source      SignalSource @default(MANUAL)
+  created_at  DateTime     @default(now())
+
+  // ウォッチリスト内のシグナルを日付順に取得しやすくするインデックス
+  @@index([watchlistId, date(sort: Desc)])
+}
+
+// ===== 日経225構成銘柄マスタ（既存踏襲・手動管理） =====
+// ウォッチリストの初期セット、およびクリアボタン押下時の並び順初期値（コード順）の基準として利用
+model Nikkei225Constituent {
+  id         String   @id @default(uuid())
+  symbol     String   @unique
+  name       String
+  sector     String?
+  updated_at DateTime @updatedAt
+}
+
+// ===== 新規：ウォッチリスト履歴（手動保存・最大10件はアプリ側で制御） =====
+// 「並び順・選択状態(チェック)・設定・Long Profit集計値・シグナル状態」を丸ごとスナップショット保存。
+// 復元は「並び順・選択状態・設定」のみ現在のウォッチリストへ反映する（Long Profit値・シグナルは参考表示のみ）。
+model WatchlistHistory {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  memo String // 覚書（再利用時の目安）
+
+  // スナップショット時点の設定（復元対象）
+  interval          String
+  entryDays         Int
+  exitDays          Int
+  atrDays           Int
+  aggregationPeriod String
+
+  // スナップショット本体：銘柄ごとの並び順・選択状態・Long Profit集計値・最新シグナル状態
+  // 例: [{ symbol, name, sortOrder, dashboardSelected,
+  //        profitCount, profitTotalProfit, profitAvgProfit, profitWins, profitLosses, profitDraws, profitWinRate,
+  //        latestSignalType, latestSignalDate, latestSignalPrice }, ...]
+  items Json
+
+  created_at DateTime @default(now())
+
+  // ユーザーごとの履歴一覧（新しい順）取得を高速化
+  @@index([userId, created_at(sort: Desc)])
+}
+
+// ===== 新規：バッチ処理進捗管理（Web Worker + ポーリング方式を流用） =====
+// 「最新シグナル取得」「Long Profit集計取得」（手動ボタン／1日1回自動再取得のいずれも）の進捗を管理する。
+// Vercel Hobbyの実行時間制限を回避するため、ブラウザ側から短い間隔でこのレコードをポーリングしながら
+// 少数銘柄ずつ処理を進める（既存screening機能のrunEngine.tsと同様の方式）。
+enum BatchJobType {
+  SIGNAL_FETCH
+  PROFIT_AGGREGATION
+}
+
+enum BatchJobStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model BatchJob {
+  id     String         @id @default(uuid())
+  userId String
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type   BatchJobType
+  status BatchJobStatus @default(RUNNING)
+
+  totalCount     Int @default(0)
+  processedCount Int @default(0)
+  errorCount     Int @default(0)
+
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  // 実行中ジョブの取得・履歴確認を高速化
+  @@index([userId, type, startedAt(sort: Desc)])
+}

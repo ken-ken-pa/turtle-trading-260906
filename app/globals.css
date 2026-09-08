@@ -1,0 +1,71 @@
+/* Tailwind CSSをインポート */
+@import "tailwindcss";
+
+/* ルート変数の定義 */
+:root {
+  /* 背景色変数 */
+  --background: #ffffff;
+  /* 前景色（文字色）変数 */
+  --foreground: #171717;
+}
+
+/* インラインテーマ設定 */
+@theme inline {
+  /* テーマ背景色設定 */
+  --color-background: var(--background);
+  /* テーマ前景色設定 */
+  --color-foreground: var(--foreground);
+  /* テーマ基本フォント設定 */
+  --font-sans: var(--font-geist-sans);
+  /* テーマ等幅フォント設定 */
+  --font-mono: var(--font-geist-mono);
+}
+
+/* ダークモード時のルート変数設定 */
+@media (prefers-color-scheme: dark) {
+  /* ルートセレクタ */
+  :root {
+    /* ダークモード背景色 */
+    --background: #0a0a0a;
+    /* ダークモード文字色 */
+    --foreground: #ededed;
+  }
+}
+
+/* ボディタグの基本スタイル */
+body {
+  /* 背景色の適用 */
+  background: var(--background);
+  /* 文字色の適用 */
+  color: var(--foreground);
+  /* フォントファミリーの適用 */
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* WebKit系ブラウザ（Chrome, Safari, Edge）でスクロールバーを非表示にする設定 */
+::-webkit-scrollbar {
+  /* スクロールバー要素を非表示に指定 */
+  display: none;
+}
+
+/* 全要素のスクロールバーを非表示にしつつスクロール機能を維持する設定 */
+* {
+  /* Firefox用のスクロールバー非表示指定 */
+  scrollbar-width: none;
+  /* IEおよび旧Edge用のスクロールバー非表示指定 */
+  -ms-overflow-style: none;
+}
+
+/* 明示的にスクロールバーを非表示にするユーティリティクラス */
+.no-scrollbar::-webkit-scrollbar {
+  /* WebKit系でスクロールバーを非表示 */
+  display: none;
+}
+
+/* 明示的にスクロールバーを非表示にするユーティリティクラス（Firefox, IE/Edge） */
+.no-scrollbar {
+  /* Firefox用のスクロールバー非表示指定 */
+  scrollbar-width: none;
+  /* IEおよび旧Edge用のスクロールバー非表示指定 */
+  -ms-overflow-style: none;
+}
