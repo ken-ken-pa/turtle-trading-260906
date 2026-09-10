@@ -2,12 +2,14 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Navbar from '@/components/layout/Navbar';
+import MobileDrawer from '@/components/layout/MobileDrawer';
 import WatchlistTable from '@/components/watchlist/WatchlistTable';
 import SettingsPanel from '@/components/watchlist/SettingsPanel';
 import ProgressBar from '@/components/watchlist/ProgressBar';
 import AddSymbolInput from '@/components/watchlist/AddSymbolInput';
 import HistoryModal from '@/components/watchlist/HistoryModal';
-import { WatchlistItem, SortKey, SortDirection, BatchJob, UserSettingData } from '@/components/watchlist/types';
+import { WatchlistItem, SortKeyEntry, BatchJob, UserSettingData } from '@/components/watchlist/types';
+import { applyWatchlistSort } from '@/lib/watchlist/sort';
 
 const BATCH_JOB_STORAGE_KEY = 'watchlist:activeBatchJobId';
 const AUTO_CHAIN_STORAGE_KEY = 'watchlist:autoChainStep'; // 'PROFIT_AGGREGATION'待ち状態をリロード後も保持するため
@@ -25,8 +27,7 @@ export default function WatchlistPage() {
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<UserSettingData | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>(null);
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [sortKeys, setSortKeys] = useState<SortKeyEntry[]>([]);
   const [activeJob, setActiveJob] = useState<BatchJob | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showAutoRefreshDialog, setShowAutoRefreshDialog] = useState(false);
@@ -60,81 +61,67 @@ export default function WatchlistPage() {
     loadSettings();
   }, [loadWatchlist, loadSettings]);
 
-  // 設定読み込み完了時に、DBへ保存されていた列ソート状態を復元する（初回のみ）
+  // 設定読み込み完了時に、DBへ保存されていた複数列ソート状態を復元する（初回のみ）
   useEffect(() => {
     if (!settings || sortInitializedRef.current) return;
     sortInitializedRef.current = true;
-    if (settings.watchlistSortKey) {
-      setSortKey(settings.watchlistSortKey);
-      setSortDirection(settings.watchlistSortDirection ?? 'desc');
+    if (settings.watchlistSortKeys && settings.watchlistSortKeys.length > 0) {
+      setSortKeys(settings.watchlistSortKeys);
     }
   }, [settings]);
 
-  // 列ソート状態をDBへ保存する（リロード・再ログイン・別端末でも維持するため）
-  const persistSort = (key: SortKey, direction: SortDirection) => {
+  // 複数列ソート状態をDBへ保存する（リロード・再ログイン・別端末でも維持するため）
+  const persistSortKeys = (keys: SortKeyEntry[]) => {
     fetch('/api/user/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ watchlistSortKey: key, watchlistSortDirection: direction }),
+      body: JSON.stringify({ watchlistSortKeys: keys }),
     });
   };
 
-  // ── 列ソート: 降順 → 昇順 → ソートなし の3状態を循環 ──
-  const handleSortClick = (key: Exclude<SortKey, null>) => {
-    if (sortKey !== key) {
-      setSortKey(key);
-      setSortDirection('desc');
-      persistSort(key, 'desc');
+  // ── 列ソート（複数列対応。Excelライクな優先順位付きソート） ──
+  // ・未ソートの列をクリック：最下位優先として追加し、降順から開始する
+  // ・既にソート対象の列をクリック：降順→昇順、と向きを進める（優先順位はそのまま）。
+  //   「昇順」の状態から再度クリックした場合（＝次はソートなしへ進む場合）は、
+  //   WatchlistTable側で確認ポップアップが表示されるため、ここには到達しない。
+  const handleSortClick = (key: SortKeyEntry['key']) => {
+    const idx = sortKeys.findIndex((s) => s.key === key);
+
+    if (idx === -1) {
+      // 新規クリック：最下位優先として追加し、降順から開始
+      const next = [...sortKeys, { key, direction: 'desc' as const }];
+      setSortKeys(next);
+      persistSortKeys(next);
       return;
     }
-    if (sortDirection === 'desc') {
-      setSortDirection('asc');
-      persistSort(key, 'asc');
-      return;
+
+    const current = sortKeys[idx];
+    if (current.direction === 'desc') {
+      // 降順 → 昇順（優先順位はそのまま）
+      const next = sortKeys.map((s, i) => (i === idx ? { ...s, direction: 'asc' as const } : s));
+      setSortKeys(next);
+      persistSortKeys(next);
     }
-    // ソートなしに戻す（＝手動並べ替えのベース順=sortOrder順で表示）
-    setSortKey(null);
-    setSortDirection('desc');
-    persistSort(null, 'desc');
+    // direction === 'asc' の場合はWatchlistTable側でポップアップ表示に切り替わるため、ここでは何もしない
   };
 
-  const getSortValue = (item: WatchlistItem, key: Exclude<SortKey, null>) => {
-    switch (key) {
-      case 'symbol':
-        return item.symbol;
-      case 'name':
-        return item.name ?? '';
-      case 'selected':
-        return item.dashboardSelected ? 1 : 0;
-      case 'signalType':
-        return item.latestSignalType ?? '';
-      case 'signalDate':
-        return item.latestSignalDate ? new Date(item.latestSignalDate).getTime() : -Infinity;
-      case 'signalPrice':
-        return item.latestSignalPrice ?? -Infinity;
-      case 'profitCount':
-        return item.profitCount ?? -Infinity;
-      case 'profitWinRate':
-        return item.profitWinRate ?? -Infinity;
-      case 'profitTotalProfit':
-        return item.profitTotalProfit ?? -Infinity;
-      default:
-        return '';
-    }
+  // ソート解除確認ポップアップで「はい」が選択された場合：優先順位リストから除外し、他の列の優先順位は詰めて維持
+  const handleSortClearConfirm = (key: SortKeyEntry['key']) => {
+    const next = sortKeys.filter((s) => s.key !== key);
+    setSortKeys(next);
+    persistSortKeys(next);
   };
 
-  const sortedItems = useMemo(() => {
-    // ソートなし＝APIが返すsortOrder順（＝手動並べ替えのベース順）をそのまま使用
-    if (!sortKey) return items;
-    const dir = sortDirection === 'asc' ? 1 : -1;
-    return [...items].sort((a, b) => {
-      const va = getSortValue(a, sortKey);
-      const vb = getSortValue(b, sortKey);
-      if (va < vb) return -1 * dir;
-      if (va > vb) return 1 * dir;
-      return 0;
-    });
-  }, [items, sortKey, sortDirection]);
+  // ソート解除確認ポップアップで「いいえ」が選択された場合：優先順位は変えず、降順に戻す
+  const handleSortClearCancel = (key: SortKeyEntry['key']) => {
+    const next = sortKeys.map((s) => (s.key === key ? { ...s, direction: 'desc' as const } : s));
+    setSortKeys(next);
+    persistSortKeys(next);
+  };
+
+  // 表示順の算出（複数列ソート）は、ダッシュボードと表示順を完全に一致させるため
+  // 共通ユーティリティ(lib/watchlist/sort.ts)のロジックをそのまま利用する
+  const sortedItems = useMemo(() => applyWatchlistSort(items, sortKeys), [items, sortKeys]);
 
   // ── 銘柄追加 ──
   const handleAdd = async (symbol: string, name: string) => {
@@ -178,6 +165,30 @@ export default function WatchlistPage() {
     }
   };
 
+  // ── 取得単価・保有株数・取得日の更新（3項目すべて揃うと自動でダッシュボード表示チェックがONになる。
+  //     サーバー側の計算結果（dashboardSelected・unitProfit・totalProfitの変化を含む）をそのまま反映する） ──
+  const handleUpdateAcquisition = async (
+    id: string,
+    patch: Partial<Pick<WatchlistItem, 'acquisitionPrice' | 'acquisitionShares' | 'acquisitionDate'>>
+  ) => {
+    const prevItems = items;
+    // 楽観的更新（サーバー応答後に正式な値で上書きする）
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
+    const res = await fetch(`/api/watchlist/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) {
+      setItems(prevItems);
+      const data = await res.json().catch(() => ({}));
+      alert(data.error ?? '更新に失敗しました。時間を置いて再度お試しください。');
+      return;
+    }
+    const data = await res.json();
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...data.watchlist } : i)));
+  };
+
   // ── 手動並べ替え（ドラッグ&ドロップ確定） ──
   const handleReorder = async (orderedIds: string[]) => {
     const prevItems = items;
@@ -196,17 +207,39 @@ export default function WatchlistPage() {
     }
   };
 
-  // ── クリアボタン ──
-  const handleClear = async () => {
+  // ── 取得値クリア：最新シグナル・Long Profit集計値・単価損益・損益合計のみをクリアする。
+  //     並び順・選択状態・保有ポジション情報（取得単価・保有株数・取得日）は維持する ──
+  const handleClearSignals = async () => {
     if (
       !confirm(
-        '並び順を初期値（日経225コード順）に、Long Profit集計値・最新シグナルを空欄に戻します。よろしいですか？'
+        '取得値とそれに関係する値をクリアします。具体的には以下をクリアします。\n\n最新シグナル、Long Profit集計、単価損益、損益合計\n\n実施しますか？'
       )
     )
       return;
-    await fetch('/api/watchlist/clear', { method: 'POST' });
-    setSortKey(null);
-    persistSort(null, 'desc');
+    await fetch('/api/watchlist/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'signals' }),
+    });
+    loadWatchlist();
+  };
+
+  // ── 全クリア：取得値クリアの内容に加え、並び順（列ソート・ドラッグ順の両方）・
+  //     取得単価・保有株数・取得日・ダッシュボード表示チェックもすべて初期状態に戻す ──
+  const handleClearAll = async () => {
+    if (
+      !confirm(
+        '初期値に戻します。具体的には以下をクリアします。\n\n最新シグナル、Long Profit集計、単価損益、損益合計、並び替え、取得単価、保有株数、取得日、チェックボックスの選択\n\n実施しますか？'
+      )
+    )
+      return;
+    await fetch('/api/watchlist/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'all' }),
+    });
+    setSortKeys([]);
+    persistSortKeys([]);
     loadWatchlist();
   };
 
@@ -374,58 +407,78 @@ export default function WatchlistPage() {
 
   const isBusy = activeJob?.status === 'RUNNING' || autoRefreshRunning;
 
+  // ツールバーの各種ボタン群。lg以上（横並び）とlg未満（ハンバーガーメニュー内・縦積み）の
+  // 両方で見た目だけ変えて共通利用する（stacked=trueの場合は縦積み・幅いっぱいのボタンにする）
+  const renderToolbarButtons = (stacked: boolean) => {
+    const btnBase = stacked ? 'w-full text-sm rounded px-3 py-2' : 'text-sm rounded px-3 py-1.5';
+    return (
+      <>
+        <AddSymbolInput onAdd={handleAdd} />
+        <button
+          onClick={runSequentialBatch}
+          disabled={isBusy}
+          className={`bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 font-semibold ${btnBase}`}
+          title="シグナル取得→完了後にLong Profit集計取得を自動で連続実行します"
+        >
+          一括実行(取得+集計)
+        </button>
+        <button
+          onClick={() => runBatchJob('SIGNAL_FETCH')}
+          disabled={isBusy}
+          className={`bg-blue-600 hover:bg-blue-500 disabled:opacity-50 ${btnBase}`}
+        >
+          シグナル取得
+        </button>
+        <button
+          onClick={() => runBatchJob('PROFIT_AGGREGATION')}
+          disabled={isBusy}
+          className={`bg-purple-600 hover:bg-purple-500 disabled:opacity-50 ${btnBase}`}
+        >
+          Long Profit集計取得
+        </button>
+        <button onClick={handleSaveHistory} className={`bg-gray-700 hover:bg-gray-600 ${btnBase}`}>
+          履歴として保存
+        </button>
+        <button onClick={() => setShowHistoryModal(true)} className={`bg-gray-700 hover:bg-gray-600 ${btnBase}`}>
+          履歴を見る
+        </button>
+        <button
+          onClick={handleClearSignals}
+          className={`bg-orange-900/60 hover:bg-orange-800 ${btnBase} ${stacked ? '' : 'ml-auto'}`}
+        >
+          取得値クリア
+        </button>
+        <button onClick={handleClearAll} className={`bg-red-900/60 hover:bg-red-800 ${btnBase}`}>
+          全クリア
+        </button>
+      </>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gray-950 text-white">
       <Navbar />
       <div className="max-w-7xl mx-auto px-4 py-6">
         <h1 className="text-xl font-bold mb-4">ウォッチリスト</h1>
 
-        {settings && (
-          <SettingsPanel settings={settings} onChange={handleSettingsChange} saving={savingSettings} />
-        )}
+        {/* 設定パネル・ツールバー：lg（デスクトップ）以上はそのまま表示 */}
+        <div className="hidden lg:block">
+          {settings && (
+            <SettingsPanel settings={settings} onChange={handleSettingsChange} saving={savingSettings} />
+          )}
+          <div className="flex flex-wrap items-center gap-2 mb-3">{renderToolbarButtons(false)}</div>
+        </div>
 
-        <div className="flex flex-wrap items-center gap-2 mb-3">
-          <AddSymbolInput onAdd={handleAdd} />
-          <button
-            onClick={runSequentialBatch}
-            disabled={isBusy}
-            className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-sm rounded px-3 py-1.5 font-semibold"
-            title="最新シグナル取得→完了後にLong Profit集計取得を自動で連続実行します"
-          >
-            一括実行(取得+集計)
-          </button>
-          <button
-            onClick={() => runBatchJob('SIGNAL_FETCH')}
-            disabled={isBusy}
-            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm rounded px-3 py-1.5"
-          >
-            最新シグナル取得
-          </button>
-          <button
-            onClick={() => runBatchJob('PROFIT_AGGREGATION')}
-            disabled={isBusy}
-            className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-sm rounded px-3 py-1.5"
-          >
-            Long Profit集計取得
-          </button>
-          <button
-            onClick={handleSaveHistory}
-            className="bg-gray-700 hover:bg-gray-600 text-sm rounded px-3 py-1.5"
-          >
-            履歴として保存
-          </button>
-          <button
-            onClick={() => setShowHistoryModal(true)}
-            className="bg-gray-700 hover:bg-gray-600 text-sm rounded px-3 py-1.5"
-          >
-            履歴を見る
-          </button>
-          <button
-            onClick={handleClear}
-            className="bg-red-900/60 hover:bg-red-800 text-sm rounded px-3 py-1.5 ml-auto"
-          >
-            クリア
-          </button>
+        {/* 設定パネル・ツールバー：lg未満（タブレット・スマホ）はハンバーガーメニューに収める */}
+        <div className="lg:hidden mb-3 flex justify-end">
+          <MobileDrawer>
+            <div className="space-y-5">
+              {settings && (
+                <SettingsPanel settings={settings} onChange={handleSettingsChange} saving={savingSettings} />
+              )}
+              <div className="flex flex-col gap-2">{renderToolbarButtons(true)}</div>
+            </div>
+          </MobileDrawer>
         </div>
 
         {activeJob && isBusy && <ProgressBar job={activeJob} />}
@@ -435,12 +488,14 @@ export default function WatchlistPage() {
         ) : (
           <WatchlistTable
             items={sortedItems}
-            sortKey={sortKey}
-            sortDirection={sortDirection}
+            sortKeys={sortKeys}
             onSortClick={handleSortClick}
+            onSortClearConfirm={handleSortClearConfirm}
+            onSortClearCancel={handleSortClearCancel}
             onToggleSelect={handleToggleSelect}
             onDelete={handleDelete}
             onReorder={handleReorder}
+            onUpdateAcquisition={handleUpdateAcquisition}
           />
         )}
       </div>

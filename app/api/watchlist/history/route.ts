@@ -29,7 +29,7 @@ export async function GET() {
 
 // POST: 現在のウォッチリスト状態を履歴としてスナップショット保存する
 // body: { memo: string }
-// 保存内容: 並び順・選択状態・Long Profit集計値・最新シグナル状態（すべて丸ごと）＋計算に使った設定
+// 保存内容: 並び順・選択状態・Long Profit集計値・最新シグナル状態・保有ポジション情報（すべて丸ごと）＋計算に使った設定
 export async function POST(request: Request) {
   try {
     const session = await getServerSession(authOptions);
@@ -67,6 +67,12 @@ export async function POST(request: Request) {
       latestSignalType: item.latestSignalType,
       latestSignalDate: item.latestSignalDate,
       latestSignalPrice: item.latestSignalPrice,
+      // 保有ポジション情報（参考表示のみ。復元対象には含めない）
+      acquisitionPrice: item.acquisitionPrice,
+      acquisitionShares: item.acquisitionShares,
+      acquisitionDate: item.acquisitionDate,
+      unitProfit: item.unitProfit,
+      totalProfit: item.totalProfit,
     }));
 
     const created = await prisma.watchlistHistory.create({

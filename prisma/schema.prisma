@@ -91,9 +91,15 @@ model UserSetting {
   lastAutoRefreshDate DateTime? @db.Date // 直近で自動再取得を実行済みの日付（本日分の未実行判定に使用）
 
   // ── ウォッチリストの列ソート状態（リロード・再ログイン・別端末でも維持するためDBへ保存） ──
-  // watchlistSortKeyがnullの場合は「ソートなし」＝手動並べ替えのベース順（Watchlist.sortOrder順）で表示
-  watchlistSortKey       String? // 'symbol' | 'name' | 'selected' | 'signalType' | 'signalDate' | 'signalPrice' | 'profitCount' | 'profitWinRate' | 'profitTotalProfit'
-  watchlistSortDirection String  @default("desc") // 'asc' | 'desc'
+  // 複数列ソート（Excelライクな優先順位付きソート）に対応するため、配列(JSON)で保持する。
+  // 配列の先頭が第1優先、以降は第2優先・第3優先…と続く。空配列またはnullは「ソートなし」＝
+  // 手動並べ替えのベース順（Watchlist.sortOrder順）で表示することを意味する。
+  // 例: [{"key":"selected","direction":"desc"},{"key":"name","direction":"asc"}]
+  //   → 「選択」降順を第1優先、「銘柄名」昇順を第2優先としてソートする
+  // keyに指定できる値: 'symbol' | 'name' | 'selected' | 'signalType' | 'signalDate' | 'signalPrice' |
+  //   'profitCount' | 'profitWinRate' | 'profitTotalProfit' |
+  //   'acquisitionPrice' | 'acquisitionShares' | 'acquisitionDate' | 'unitProfit' | 'totalProfit'
+  watchlistSortKeys Json?
 
   updated_at DateTime @updatedAt
 }
@@ -131,6 +137,18 @@ model Watchlist {
   latestSignalType  String?
   latestSignalDate  DateTime?
   latestSignalPrice Float?
+
+  // ── 実際の保有ポジション情報（ユーザー手動入力。「最新シグナル取得」「Long Profit集計取得」の
+  //    実行やクリアボタンでは上書き・消去しない。1銘柄につき1ポジションのみを想定） ──
+  acquisitionPrice  Int?      // 取得単価（円、整数）
+  acquisitionShares Int?      // 保有株数（整数）
+  acquisitionDate   DateTime? @db.Date // 取得日
+
+  // ── 保有損益（自動計算）。取得単価・保有株数・取得日の3項目が揃っている場合のみ、
+  //    「最新シグナル取得」「Long Profit集計取得」実行時にその時点の直近終値を基準に再計算する。
+  //    3項目のいずれかが未入力に戻った場合は計算根拠が失われるためnullに戻す ──
+  unitProfit  Float? // 単価損益 = 直近終値 - 取得単価
+  totalProfit Float? // 損益合計 = 単価損益 × 保有株数
 
   created_at DateTime        @default(now())
   signals    SignalHistory[]
@@ -172,8 +190,8 @@ model Nikkei225Constituent {
 }
 
 // ===== 新規：ウォッチリスト履歴（手動保存・最大10件はアプリ側で制御） =====
-// 「並び順・選択状態(チェック)・設定・Long Profit集計値・シグナル状態」を丸ごとスナップショット保存。
-// 復元は「並び順・選択状態・設定」のみ現在のウォッチリストへ反映する（Long Profit値・シグナルは参考表示のみ）。
+// 「並び順・選択状態(チェック)・設定・Long Profit集計値・シグナル状態・保有ポジション情報」を丸ごとスナップショット保存。
+// 復元は「並び順・選択状態・設定」のみ現在のウォッチリストへ反映する（Long Profit値・シグナル・保有ポジション情報は参考表示のみ）。
 model WatchlistHistory {
   id     String @id @default(uuid())
   userId String
@@ -188,10 +206,11 @@ model WatchlistHistory {
   atrDays           Int
   aggregationPeriod String
 
-  // スナップショット本体：銘柄ごとの並び順・選択状態・Long Profit集計値・最新シグナル状態
+  // スナップショット本体：銘柄ごとの並び順・選択状態・Long Profit集計値・最新シグナル状態・保有ポジション情報
   // 例: [{ symbol, name, sortOrder, dashboardSelected,
   //        profitCount, profitTotalProfit, profitAvgProfit, profitWins, profitLosses, profitDraws, profitWinRate,
-  //        latestSignalType, latestSignalDate, latestSignalPrice }, ...]
+  //        latestSignalType, latestSignalDate, latestSignalPrice,
+  //        acquisitionPrice, acquisitionShares, acquisitionDate, unitProfit, totalProfit }, ...]
   items Json
 
   created_at DateTime @default(now())

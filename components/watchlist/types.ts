@@ -27,6 +27,13 @@ export interface WatchlistItem {
   latestSignalType: string | null;
   latestSignalDate: string | null;
   latestSignalPrice: number | null;
+  // 実際の保有ポジション情報（ユーザー手動入力。バッチ処理・クリアボタンでは上書き・消去しない）
+  acquisitionPrice: number | null; // 取得単価（整数）
+  acquisitionShares: number | null; // 保有株数（整数）
+  acquisitionDate: string | null; // 取得日（ISO日付文字列）
+  // 保有損益（自動計算。取得単価・保有株数が揃っている場合のみ、バッチ処理実行時に再計算される）
+  unitProfit: number | null; // 単価損益 = 直近終値 - 取得単価
+  totalProfit: number | null; // 損益合計 = 単価損益 × 保有株数
 }
 
 // 列ソート対象キー（未指定=ソートなし＝手動並べ替えのベース順で表示）
@@ -39,11 +46,23 @@ export type SortKey =
   | 'signalPrice'
   | 'profitCount'
   | 'profitWinRate'
+  | 'profitAvgProfit'
   | 'profitTotalProfit'
+  | 'acquisitionPrice'
+  | 'acquisitionShares'
+  | 'acquisitionDate'
+  | 'unitProfit'
+  | 'totalProfit'
   | null;
 
 // ソート方向。降順→昇順→ソートなしの順で循環させる仕様のためdescを起点とする
 export type SortDirection = 'desc' | 'asc';
+
+// 複数列ソート1件分の型定義（優先順位は配列内の並び順で表現する。先頭が第1優先）
+export interface SortKeyEntry {
+  key: Exclude<SortKey, null>;
+  direction: SortDirection;
+}
 
 // バッチジョブ（最新シグナル取得 / Long Profit集計取得）の型定義
 export interface BatchJob {
@@ -66,9 +85,9 @@ export interface UserSettingData {
   period: string;
   autoRefreshTime: string | null; // "HH:mm"
   lastAutoRefreshDate: string | null;
-  // ウォッチリストの列ソート状態（DBに永続化。別端末・再ログインでも維持される）
-  watchlistSortKey: SortKey;
-  watchlistSortDirection: SortDirection;
+  // ウォッチリストの列ソート状態（複数列対応。DBに永続化。別端末・再ログインでも維持される）
+  // 配列の先頭が第1優先。空配列は「ソートなし」＝手動並べ替えのベース順で表示
+  watchlistSortKeys: SortKeyEntry[];
 }
 
 // ウォッチリスト履歴のスナップショット内、銘柄1件分の型定義
@@ -87,6 +106,12 @@ export interface WatchlistHistorySnapshotItem {
   latestSignalType: string | null;
   latestSignalDate: string | null;
   latestSignalPrice: number | null;
+  // 保有ポジション情報（参考表示のみ。復元対象には含めない）
+  acquisitionPrice: number | null;
+  acquisitionShares: number | null;
+  acquisitionDate: string | null;
+  unitProfit: number | null;
+  totalProfit: number | null;
 }
 
 // ウォッチリスト履歴1件分の型定義

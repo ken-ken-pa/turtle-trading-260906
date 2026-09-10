@@ -111,6 +111,12 @@ interface TurtleChartProps {
   // 銘柄の検索・変更UIを表示するか（260906: ダッシュボード側の銘柄検索欄は廃止のためfalseで使用。
   // 銘柄はウォッチリストのチェック選択で決まるため、ここでは表示専用の企業名バッジのみ残す）
   symbolEditable?: boolean;
+  // 保有ポジションの取得単価（ウォッチリストで手入力された値）。指定時はチャートにピンク色の横線を描画する
+  acquisitionPrice?: number | null;
+  // 保有ポジションの取得日（ウォッチリストで手入力された値）。指定時はチャートにピンク色の点線縦線を描画する
+  acquisitionDate?: string | null;
+  // ドラッグ&ドロップによるチャート位置の並べ替えを許可するか（ウォッチリストで列ソートが有効な間はfalse）
+  dragEnabled?: boolean;
 }
 
 // シグナルデータのインターフェース定義
@@ -213,6 +219,9 @@ export default function TurtleChart({
   onChartDoubleClick,
   isDuplicate = false,
   symbolEditable = true,
+  acquisitionPrice = null,
+  acquisitionDate = null,
+  dragEnabled = true,
 }: TurtleChartProps) {
   // 現在の銘柄コードのステート（親からsymbolが渡されていればそれを優先／Yahoo Finance用に.T付きで保持）
   const [currentSymbol, setCurrentSymbol] = useState<string>(symbol || initialSymbol);
@@ -246,12 +255,18 @@ export default function TurtleChart({
   const chartContainerRef = useRef<HTMLDivElement>(null);
   // チャートインスタンスの参照
   const chartRef = useRef<IChartApi | null>(null);
+  // ローソク足シリーズの参照（取得単価の縦座標(Y座標)算出に使用）
+  const candlestickSeriesRef = useRef<any>(null);
   // シグナル一覧データの参照
   const signalsRef = useRef<SignalItem[]>([]);
   // 画面描画対象バッジ配列のステート
   const [renderedBadges, setRenderedBadges] = useState<RenderBadge[]>([]);
   // 価格軸の横幅ピクセル値のステート
   const [priceScaleWidth, setPriceScaleWidth] = useState<number>(65);
+  // 取得日の縦線描画X座標ピクセル値のステート（表示範囲外の場合はnull＝非表示）
+  const [acquisitionLineX, setAcquisitionLineX] = useState<number | null>(null);
+  // 取得単価の横線描画Y座標ピクセル値のステート（左端ラベル表示位置の算出に使用）
+  const [acquisitionPriceY, setAcquisitionPriceY] = useState<number | null>(null);
 
   // 入力値に基づくローカル銘柄マスターのサジェストリストのフィルタリング処理
   const localSuggestions = STOCK_MASTER.filter((item) => {
@@ -402,7 +417,27 @@ export default function TurtleChart({
 
     // バッジ描画用ステートを更新
     setRenderedBadges(badges);
-  }, []);
+
+    // 取得日（保有ポジション情報）の縦線描画位置を計算
+    if (acquisitionDate) {
+      const coordinate = timeScale.timeToCoordinate(normalizeDate(acquisitionDate) as any);
+      if (coordinate !== null && coordinate >= -100 && coordinate <= containerWidth) {
+        setAcquisitionLineX(coordinate);
+      } else {
+        setAcquisitionLineX(null);
+      }
+    } else {
+      setAcquisitionLineX(null);
+    }
+
+    // 取得単価（保有ポジション情報）の横線描画Y座標を計算（左端ラベル表示位置に使用）
+    if (acquisitionPrice != null && candlestickSeriesRef.current) {
+      const y = candlestickSeriesRef.current.priceToCoordinate(acquisitionPrice);
+      setAcquisitionPriceY(y);
+    } else {
+      setAcquisitionPriceY(null);
+    }
+  }, [acquisitionDate, acquisitionPrice]);
 
   // チャート初期化とデータ読み込みのエフェクト処理
   useEffect(() => {
@@ -519,6 +554,22 @@ export default function TurtleChart({
       priceLineVisible: false,
       lastValueVisible: true,
     });
+
+    // ローソク足シリーズの参照を保存（取得単価のY座標算出に使用）
+    candlestickSeriesRef.current = candlestickSeries;
+
+    // 保有ポジションの取得単価をピンク色の横線として描画（未入力の場合は描画しない）。
+    // 右側の価格軸ラベルは非表示にし、代わりにチャート左端へカスタムラベルを表示する（updateOverlayPositions参照）
+    if (acquisitionPrice != null) {
+      candlestickSeries.createPriceLine({
+        price: acquisitionPrice,
+        color: '#EC4899',
+        lineWidth: 2,
+        lineStyle: LineStyle.Solid,
+        axisLabelVisible: false,
+        title: '',
+      });
+    }
 
     // アッパーブレイクアウトラインシリーズを追加
     const upperSeries = chart.addLineSeries({
@@ -706,7 +757,17 @@ export default function TurtleChart({
         chartRef.current = null;
       }
     };
-  }, [currentSymbol, period, interval, entryDays, exitDays, atrDays, updateOverlayPositions]);
+  }, [
+    currentSymbol,
+    period,
+    interval,
+    entryDays,
+    exitDays,
+    atrDays,
+    acquisitionPrice,
+    acquisitionDate,
+    updateOverlayPositions,
+  ]);
 
   // コンポーネントの描画UI要素を返却
   return (
@@ -719,10 +780,12 @@ export default function TurtleChart({
       <div className="flex-none flex items-center justify-between pb-2 mb-1.5 border-b border-slate-800/60 relative z-30">
         {/* 左側操作グループ */}
         <div className="flex items-center gap-2">
-          {/* チャート番号インデックス（ドラッグハンドル：ドラッグしてチャートの位置を並び替え） */}
+          {/* チャート番号インデックス（ドラッグハンドル：ドラッグしてチャートの位置を並び替え。
+              ウォッチリストで列ソートが有効な間は、意味のある並べ替えができないため無効化する） */}
           <span
-            draggable
+            draggable={dragEnabled}
             onDragStart={(e) => {
+              if (!dragEnabled) return;
               // ドラッグ操作を「移動」として指定
               e.dataTransfer.effectAllowed = 'move';
               // 親コンポーネントへドラッグ開始を通知
@@ -732,8 +795,16 @@ export default function TurtleChart({
               // 親コンポーネントへドラッグ終了を通知（ドロップが成立しなかった場合の状態リセット用）
               onDragHandleEnd?.();
             }}
-            title="ドラッグしてチャートの位置を並び替え"
-            className="text-xs font-mono font-bold text-slate-500 cursor-grab active:cursor-grabbing select-none px-1 -ml-1 hover:text-slate-300 transition"
+            title={
+              dragEnabled
+                ? 'ドラッグしてチャートの位置を並び替え'
+                : 'ウォッチリストでソート中はドラッグでの並び替えはできません'
+            }
+            className={`text-xs font-mono font-bold select-none px-1 -ml-1 transition ${
+              dragEnabled
+                ? 'text-slate-500 cursor-grab active:cursor-grabbing hover:text-slate-300'
+                : 'text-slate-700 cursor-not-allowed'
+            }`}
           >
             ⠿ #{index + 1}
           </span>
@@ -871,7 +942,40 @@ export default function TurtleChart({
                 strokeDasharray="4 4"
               />
             ))}
+
+            {/* 保有ポジションの取得日をピンク色の点線縦線として描画（未入力・表示範囲外の場合は非表示） */}
+            {acquisitionLineX !== null && (
+              <line
+                x1={acquisitionLineX}
+                y1={0}
+                x2={acquisitionLineX}
+                y2="100%"
+                stroke="#EC4899"
+                strokeWidth="1.5"
+                strokeDasharray="4 4"
+              />
+            )}
           </svg>
+
+          {/* 取得日ラベル（縦線の位置がわかるよう上端に小さく表示） */}
+          {acquisitionLineX !== null && (
+            <div
+              className="absolute pointer-events-none -translate-x-1/2 px-1.5 py-0.5 rounded shadow-lg bg-[#EC4899] text-white text-[10px] font-bold whitespace-nowrap"
+              style={{ left: `${acquisitionLineX}px`, top: '8px' }}
+            >
+              取得日
+            </div>
+          )}
+
+          {/* 取得単価ラベル（チャート左端に表示。右側の価格軸ラベルの代わりに独自表示する） */}
+          {acquisitionPriceY !== null && acquisitionPrice != null && (
+            <div
+              className="absolute pointer-events-none -translate-y-1/2 px-1.5 py-0.5 rounded shadow-lg bg-[#EC4899] text-white text-[10px] font-bold whitespace-nowrap"
+              style={{ left: '4px', top: `${acquisitionPriceY}px` }}
+            >
+              取得単価 {acquisitionPrice.toLocaleString()}
+            </div>
+          )}
 
           {/* シグナルバッジ（吹き出し）要素の描画 */}
           {renderedBadges.map((badge) => {

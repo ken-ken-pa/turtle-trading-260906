@@ -13,6 +13,9 @@ import DashboardToolbar from '@/components/dashboard/DashboardToolbar';
 import DashboardMobileMenu from '@/components/dashboard/DashboardMobileMenu';
 // チャートグリッドコンポーネントをインポート
 import ChartGrid, { DashboardSymbol } from '@/components/dashboard/ChartGrid';
+// ウォッチリストと表示順を一致させるための共通ソートユーティリティ・型をインポート
+import { applyWatchlistSort } from '@/lib/watchlist/sort';
+import { SortKeyEntry } from '@/components/watchlist/types';
 
 /******************************************************************
  ダッシュボード本体コンポーネント
@@ -33,6 +36,9 @@ function DashboardContent() {
   const [atrDays, setAtrDays] = useState<number>(20);
   // ウォッチリストでチェック選択されている銘柄一覧（その並び順のまま表示対象になる）
   const [symbols, setSymbols] = useState<DashboardSymbol[]>([]);
+  // ウォッチリストの複数列ソート状態（DBに保存されている設定をそのまま反映し、チャートの表示順に使用する。
+  // 空配列の場合はソートなし＝sortOrder順で表示し、ドラッグ&ドロップによる並べ替えも可能にする）
+  const [sortKeys, setSortKeys] = useState<SortKeyEntry[]>([]);
   // ユーザー設定初期読み込み完了フラグ
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   // ドラッグ中のチャートインデックスの管理ステート（並び替え用）
@@ -51,15 +57,25 @@ function DashboardContent() {
   const gridContainerRef = useRef<HTMLDivElement | null>(null);
 
   /******************************************************************
-   ウォッチリストからチェック選択済み銘柄をその並び順のまま取得する関数
+   ウォッチリストからチェック選択済み銘柄を取得する関数。
+   ウォッチリストで列ソートが有効な場合はそのソート結果と同じ並び順にし、
+   ソートが無効（空配列）の場合はsortOrder順（＝手動並べ替えのベース順）のまま表示する。
    ******************************************************************/
-  const loadSelectedSymbols = useCallback(async () => {
+  const loadSelectedSymbols = useCallback(async (currentSortKeys: SortKeyEntry[]) => {
     const res = await fetch('/api/watchlist', { cache: 'no-store' });
     const data = await res.json();
     const list = (data.watchlist ?? []) as any[];
-    const selected: DashboardSymbol[] = list
-      .filter((w) => w.dashboardSelected)
-      .map((w) => ({ id: w.id, symbol: w.symbol, name: w.name }));
+    const selectedRaw = list.filter((w) => w.dashboardSelected);
+    // ウォッチリストと全く同じ並び替えロジックを適用することで表示順を完全に一致させる
+    const ordered = applyWatchlistSort(selectedRaw, currentSortKeys);
+    const selected: DashboardSymbol[] = ordered.map((w) => ({
+      id: w.id,
+      symbol: w.symbol,
+      name: w.name,
+      // 保有ポジション情報（チャートへのピンク色ライン描画に使用）
+      acquisitionPrice: w.acquisitionPrice ?? null,
+      acquisitionDate: w.acquisitionDate ?? null,
+    }));
     setSymbols(selected);
   }, []);
 
@@ -68,6 +84,13 @@ function DashboardContent() {
    ドラッグ元・ドロップ先の2銘柄のsortOrderを入れ替え、ウォッチリストへ書き戻す
    ******************************************************************/
   const handleChartDrop = async (dropIndex: number) => {
+    // ウォッチリストで列ソートが有効な間は、チャートのドラッグ&ドロップ入れ替えを行わない
+    // （UI上もドラッグ開始できないようにしているが、念のため二重にガードする）
+    if (sortKeys.length > 0) {
+      setDraggedChartIndex(null);
+      setDragOverChartIndex(null);
+      return;
+    }
     if (draggedChartIndex === null || draggedChartIndex === dropIndex) {
       setDraggedChartIndex(null);
       setDragOverChartIndex(null);
@@ -140,6 +163,7 @@ function DashboardContent() {
           console.error('Failed to load user settings: HTTP', res.status);
         }
         const data = await res.json();
+        let currentSortKeys: SortKeyEntry[] = [];
         if (data.settings) {
           // ── ダッシュボード管理項目（見た目のみ） ──
           if (data.settings.splitCount) setSplitCount(data.settings.splitCount);
@@ -149,8 +173,13 @@ function DashboardContent() {
           if (data.settings.entryDays) setEntryDays(data.settings.entryDays);
           if (data.settings.exitDays) setExitDays(data.settings.exitDays);
           if (data.settings.atrDays) setAtrDays(data.settings.atrDays);
+          // ── ウォッチリストの複数列ソート状態（チャート表示順・ドラッグ&ドロップ可否の判定に使用） ──
+          currentSortKeys = Array.isArray(data.settings.watchlistSortKeys)
+            ? data.settings.watchlistSortKeys
+            : [];
+          setSortKeys(currentSortKeys);
         }
-        await loadSelectedSymbols();
+        await loadSelectedSymbols(currentSortKeys);
       } catch (err) {
         console.error('Failed to load dashboard data:', err);
       } finally {
@@ -258,6 +287,7 @@ function DashboardContent() {
           entryDays={entryDays}
           exitDays={exitDays}
           atrDays={atrDays}
+          dragEnabled={sortKeys.length === 0}
           highlightedChartIndex={highlightedChartIndex}
           dragOverChartIndex={dragOverChartIndex}
           onDragOverChange={setDragOverChartIndex}

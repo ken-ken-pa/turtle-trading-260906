@@ -11,6 +11,9 @@ export interface DashboardSymbol {
   id: string; // WatchlistレコードのID（ドラッグ&ドロップでの並べ替え書き戻しに使用）
   symbol: string; // 証券コード（4桁）
   name: string | null;
+  // 保有ポジション情報（ウォッチリストで手入力された値。チャートへのピンク色ライン描画に使用）
+  acquisitionPrice?: number | null; // 取得単価（横線の描画位置）
+  acquisitionDate?: string | null; // 取得日（縦線の描画位置）
 }
 
 // チャートグリッドのPropsインターフェース定義
@@ -36,6 +39,8 @@ export interface ChartGridProps {
   highlightedChartIndex: number | null;
   // ドラッグオーバー中のチャートインデックス
   dragOverChartIndex: number | null;
+  // ドラッグ&ドロップによる並べ替えを許可するか（ウォッチリストで列ソートが有効な間はfalseにして無効化する）
+  dragEnabled: boolean;
   // ドラッグオーバー設定コールバック
   onDragOverChange: (index: number | null) => void;
   // チャートドロップコールバック（ドラッグ元・ドロップ先のインデックスを通知。並び順の書き戻しは親が行う）
@@ -71,6 +76,7 @@ export default function ChartGrid({
   atrDays,
   highlightedChartIndex,
   dragOverChartIndex,
+  dragEnabled,
   onDragOverChange,
   onChartDrop,
   onDragStart,
@@ -100,22 +106,27 @@ export default function ChartGrid({
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   /******************************************************************
-   Shift+マウスホイールでの縦スクロール対応（既存仕様のまま維持）
+   Shift+マウスホイールでの縦スクロール対応。
+   チャート本体（lightweight-charts）がマウスホイールでの拡大縮小を内部的に処理するため、
+   コンテナ要素へのリスナー登録だけでは確実に先取りできない場合がある。
+   window自体にcapture:trueで登録することで、DOM構造やライブラリ内部の実装に関わらず、
+   必ず最初にこのハンドラーが実行されるようにする。
    ******************************************************************/
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
     const handleWheel = (e: WheelEvent) => {
       if (!e.shiftKey) return;
+      const container = containerRef.current;
+      if (!container) return;
+      // チャート一覧の表示範囲内でのホイール操作のみを対象にする（ナビゲーション等への影響を避ける）
+      if (!container.contains(e.target as Node)) return;
       e.preventDefault();
       e.stopPropagation();
       const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
       container.scrollBy({ top: delta, behavior: 'auto' });
     };
 
-    container.addEventListener('wheel', handleWheel, { capture: true, passive: false });
-    return () => container.removeEventListener('wheel', handleWheel, { capture: true } as EventListenerOptions);
+    window.addEventListener('wheel', handleWheel, { capture: true, passive: false });
+    return () => window.removeEventListener('wheel', handleWheel, { capture: true } as EventListenerOptions);
   }, []);
 
   if (symbolCount === 0) {
@@ -162,11 +173,13 @@ export default function ChartGrid({
                 : ''
             }`}
             onDragOver={(e) => {
+              if (!dragEnabled) return;
               e.preventDefault();
               onDragOverChange(idx);
             }}
             onDragLeave={() => onDragOverChange(null)}
             onDrop={(e) => {
+              if (!dragEnabled) return;
               e.preventDefault();
               onChartDrop(idx);
             }}
@@ -180,6 +193,9 @@ export default function ChartGrid({
               entryDays={entryDays}
               exitDays={exitDays}
               atrDays={atrDays}
+              acquisitionPrice={target.acquisitionPrice ?? null}
+              acquisitionDate={target.acquisitionDate ?? null}
+              dragEnabled={dragEnabled}
               onDragHandleStart={() => onDragStart(idx)}
               onDragHandleEnd={onDragEnd}
               onChartDoubleClick={() => onChartDoubleClick(idx)}

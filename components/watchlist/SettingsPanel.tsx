@@ -29,6 +29,7 @@ interface SettingsPanelProps {
 export default function SettingsPanel({ settings, onChange, saving }: SettingsPanelProps) {
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 mb-4">
+      <h2 className="text-sm font-bold text-gray-300 mb-3">戦略設定</h2>
       <div className="flex flex-wrap items-end gap-4">
         <div>
           <label className="block text-xs text-gray-400 mb-1">足種別</label>
@@ -108,9 +109,6 @@ export default function SettingsPanel({ settings, onChange, saving }: SettingsPa
 
         {saving && <span className="text-xs text-gray-500">保存中...</span>}
       </div>
-      <p className="text-[11px] text-gray-500 mt-2">
-        ※ この設定は「最新シグナル取得」「Long Profit集計取得」の計算に使う共通値です（全銘柄一律）。ダッシュボードでは足種別を表示専用で参照します。
-      </p>
     </div>
   );
 }

@@ -26,7 +26,6 @@ export async function GET() {
           aggregationPeriod: '6mo',
           splitCount: 1,
           period: '6mo',
-          watchlistSortDirection: 'desc',
         },
       });
     }
@@ -42,6 +41,7 @@ export async function GET() {
 // ── ウォッチリスト管理項目（全銘柄共通の“正”の設定） ──: entryDays, exitDays, atrDays, interval, aggregationPeriod
 // ── ダッシュボード管理項目（見た目のみ） ──: splitCount, period
 // ── 自動再取得（ブラウザ主導・1日1回） ──: autoRefreshTime
+// ── ウォッチリストの複数列ソート状態（優先順位付き配列） ──: watchlistSortKeys
 export async function POST(request: Request) {
   try {
     const session = await getServerSession(authOptions);
@@ -60,8 +60,7 @@ export async function POST(request: Request) {
       splitCount,
       period,
       autoRefreshTime,
-      watchlistSortKey,
-      watchlistSortDirection,
+      watchlistSortKeys,
     } = body;
 
     const sanitizedEntryDays =
@@ -81,6 +80,9 @@ export async function POST(request: Request) {
     const sanitizedSplitCount =
       splitCount !== undefined ? ([1, 2, 4].includes(Number(splitCount)) ? Number(splitCount) : 1) : undefined;
 
+    // watchlistSortKeysは配列(または空配列でソートなし)のみ許容。不正な形式が来た場合は無視する（undefined=変更なし）
+    const sanitizedSortKeys = Array.isArray(watchlistSortKeys) ? watchlistSortKeys : undefined;
+
     const updated = await prisma.userSetting.upsert({
       where: { userId },
       update: {
@@ -92,8 +94,7 @@ export async function POST(request: Request) {
         splitCount: sanitizedSplitCount,
         period,
         autoRefreshTime,
-        watchlistSortKey,
-        watchlistSortDirection,
+        ...(sanitizedSortKeys !== undefined ? { watchlistSortKeys: sanitizedSortKeys } : {}),
       },
       create: {
         userId,
@@ -105,8 +106,7 @@ export async function POST(request: Request) {
         splitCount: sanitizedSplitCount ?? 1,
         period: period ?? '6mo',
         autoRefreshTime: autoRefreshTime ?? null,
-        watchlistSortKey: watchlistSortKey ?? null,
-        watchlistSortDirection: watchlistSortDirection ?? 'desc',
+        watchlistSortKeys: sanitizedSortKeys ?? [],
       },
     });
 

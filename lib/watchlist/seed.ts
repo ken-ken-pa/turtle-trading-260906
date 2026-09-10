@@ -35,9 +35,40 @@ export async function ensureWatchlistSeeded(prisma: PrismaClient, userId: string
   });
 }
 
-// クリアボタン用：並び順を日経225コード順にリセットし、追加銘柄（日経225マスタに存在しない銘柄）は末尾へ。
-// Long Profit集計値はすべてnull化し、シグナル履歴は削除する（＝未計算・未取得の初期状態に戻す）。
-export async function resetWatchlist(prisma: PrismaClient, userId: string): Promise<void> {
+// 「取得値クリア」用：最新シグナル・Long Profit集計値・単価損益・損益合計のみをクリアする。
+// 並び順(sortOrder)・選択状態(dashboardSelected)・保有ポジション情報（取得単価・保有株数・取得日）は維持する。
+export async function resetSignalsAndProfit(prisma: PrismaClient, userId: string): Promise<void> {
+  await prisma.$transaction([
+    prisma.watchlist.updateMany({
+      where: { userId },
+      data: {
+        profitCount: null,
+        profitTotalProfit: null,
+        profitAvgProfit: null,
+        profitWins: null,
+        profitLosses: null,
+        profitDraws: null,
+        profitWinRate: null,
+        profitCalculatedAt: null,
+        latestSignalType: null,
+        latestSignalDate: null,
+        latestSignalPrice: null,
+        unitProfit: null,
+        totalProfit: null,
+      },
+    }),
+    // シグナル履歴を全削除（＝「最新シグナル」が値無しの状態に戻る）
+    prisma.signalHistory.deleteMany({
+      where: { watchlist: { userId } },
+    }),
+  ]);
+}
+
+// 「全クリア」用：並び順を日経225コード順（追加銘柄は末尾）にリセットし、
+// 「取得値クリア」の内容（最新シグナル・Long Profit集計値・単価損益・損益合計）に加えて、
+// 保有ポジション情報（取得単価・保有株数・取得日）とダッシュボード表示チェックもすべて初期状態に戻す。
+// ※登録銘柄そのもの（ウォッチリストへの追加・削除）は維持する
+export async function resetWatchlistToInitial(prisma: PrismaClient, userId: string): Promise<void> {
   const [items, constituents] = await Promise.all([
     prisma.watchlist.findMany({ where: { userId } }),
     prisma.nikkei225Constituent.findMany({ orderBy: { symbol: 'asc' } }),
@@ -54,12 +85,12 @@ export async function resetWatchlist(prisma: PrismaClient, userId: string): Prom
   });
 
   await prisma.$transaction([
-    // 並び順の再採番、Long Profit集計値・最新シグナルのクリア、選択状態は維持（クリア対象は並び順・集計値・シグナルのみ）
     ...sorted.map((item, index) =>
       prisma.watchlist.update({
         where: { id: item.id },
         data: {
           sortOrder: index,
+          dashboardSelected: false,
           profitCount: null,
           profitTotalProfit: null,
           profitAvgProfit: null,
@@ -71,6 +102,11 @@ export async function resetWatchlist(prisma: PrismaClient, userId: string): Prom
           latestSignalType: null,
           latestSignalDate: null,
           latestSignalPrice: null,
+          acquisitionPrice: null,
+          acquisitionShares: null,
+          acquisitionDate: null,
+          unitProfit: null,
+          totalProfit: null,
         },
       })
     ),

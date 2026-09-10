@@ -43,10 +43,8 @@ export default function DashboardToolbar({
   return (
     // 操作コントロールバー（lg以上のデスクトップのみ表示）
     <div className="flex-none px-6 py-2.5 bg-[#0B0F19]/60 border-b border-slate-800/60 hidden lg:flex items-center justify-between flex-wrap gap-4 z-20">
-      {/* 左側（タイトルおよび画面分割選択）コンテナ */}
+      {/* 左側（画面分割選択）コンテナ */}
       <div className="flex items-center gap-4">
-        {/* タイトルテキスト */}
-        <span className="text-sm font-black tracking-wider text-slate-200">TURTLE TRADING</span>
         {/* 画面分割選択 */}
         <div className="flex items-center gap-2">
           {/* 画面分割ラベル */}
@@ -69,12 +67,16 @@ export default function DashboardToolbar({
           </select>
         </div>
 
-        {/* ウォッチリストで選択中の銘柄数（表示のみ。追加・変更はウォッチリスト画面で行う） */}
-        <span className="text-xs text-slate-500">
-          表示銘柄数: <span className="font-bold text-slate-300">{selectedCount}</span>
-          <a href="/watchlist" className="ml-2 text-blue-400 hover:text-blue-300 underline">
-            ウォッチリストで選択
-          </a>
+        {/* ウォッチリストで現在チェック選択されている銘柄数（表示のみ）。
+            数字部分にマウスを乗せると、選択方法の案内をツールチップで表示する */}
+        <span className="text-xs font-bold text-slate-400">
+          表示銘柄数:{' '}
+          <span
+            className="text-slate-300 cursor-default"
+            title="チャートはウォッチリストのチェックボックスで選択した銘柄が表示されます。"
+          >
+            {selectedCount}
+          </span>
         </span>
       </div>
 
@@ -99,7 +101,7 @@ export default function DashboardToolbar({
 
         {/* 足種別バッジ（表示専用。変更はウォッチリストの共通設定パネルで行う） */}
         <span
-          title="足種別はウォッチリストの共通設定で変更できます（シグナル計算に直結するため、ダッシュボードでは表示のみ）"
+          title="足種別はウォッチリストの共通設定で変更します。"
           className="px-3 py-1 rounded-md text-xs font-bold bg-slate-800/80 border border-slate-700/60 text-slate-300 cursor-default select-none"
         >
           {intervalLabel}(表示専用)

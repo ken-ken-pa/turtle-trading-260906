@@ -28,7 +28,7 @@ export default function HistoryModal({ onClose, onRestored }: HistoryModalProps)
   }, []);
 
   const handleRestore = async (id: string) => {
-    if (!confirm('この履歴の並び順・選択状態・設定を現在のウォッチリストに反映します。よろしいですか？\n(Long Profit集計値・シグナル状態は反映されません)')) return;
+    if (!confirm('この履歴の並び順・選択状態・設定を現在のウォッチリストに反映します。よろしいですか？\n(Long Profit集計値・シグナル状態・保有ポジション情報は反映されません)')) return;
     setRestoringId(id);
     try {
       const res = await fetch(`/api/watchlist/history/${id}/restore`, { method: 'POST' });
@@ -95,7 +95,7 @@ export default function HistoryModal({ onClose, onRestored }: HistoryModalProps)
 
               <details className="mt-2">
                 <summary className="text-xs text-gray-500 cursor-pointer">
-                  当時のLong Profit集計値・シグナル状態を見る(参考表示)
+                  当時のLong Profit集計値・シグナル状態・保有損益を見る(参考表示)
                 </summary>
                 <div className="mt-2 max-h-40 overflow-y-auto text-xs">
                   <table className="w-full">
@@ -105,6 +105,10 @@ export default function HistoryModal({ onClose, onRestored }: HistoryModalProps)
                         <th className="text-left py-1">最新シグナル</th>
                         <th className="text-left py-1">件数</th>
                         <th className="text-left py-1">勝率</th>
+                        <th className="text-left py-1">取得単価</th>
+                        <th className="text-left py-1">保有株数</th>
+                        <th className="text-left py-1">単価損益</th>
+                        <th className="text-left py-1">損益合計</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -122,6 +126,18 @@ export default function HistoryModal({ onClose, onRestored }: HistoryModalProps)
                           <td className="py-0.5">{item.profitCount ?? '-'}</td>
                           <td className="py-0.5">
                             {item.profitWinRate != null ? `${Math.round(item.profitWinRate * 100)}%` : '-'}
+                          </td>
+                          <td className="py-0.5">
+                            {item.acquisitionPrice != null ? item.acquisitionPrice.toLocaleString() : '-'}
+                          </td>
+                          <td className="py-0.5">
+                            {item.acquisitionShares != null ? item.acquisitionShares.toLocaleString() : '-'}
+                          </td>
+                          <td className="py-0.5">
+                            {item.unitProfit != null ? item.unitProfit.toLocaleString() : '-'}
+                          </td>
+                          <td className="py-0.5">
+                            {item.totalProfit != null ? item.totalProfit.toLocaleString() : '-'}
                           </td>
                         </tr>
                       ))}

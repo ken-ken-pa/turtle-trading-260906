@@ -58,6 +58,24 @@ function findReferenceTradingDate(quotes: any[], cutoff: string): string | null 
   return null;
 }
 
+// 保有損益（単価損益・損益合計）を計算するヘルパー関数。
+// 取得単価・保有株数が両方入力されている場合のみ計算し、それ以外はnull（未計算）を返す。
+// 基準株価には「最新シグナル取得」「Long Profit集計取得」どちらの処理でも共通して取得できる
+// 直近終値（quotes配列の最終要素のclose）を用いる。シグナルの発生有無には左右されない。
+function calculateHoldingProfit(
+  quotes: any[],
+  acquisitionPrice: number | null,
+  acquisitionShares: number | null
+): { unitProfit: number | null; totalProfit: number | null } {
+  const latestClose = quotes.length > 0 ? quotes[quotes.length - 1].close : null;
+  if (latestClose == null || acquisitionPrice == null || acquisitionShares == null) {
+    return { unitProfit: null, totalProfit: null };
+  }
+  const unitProfit = latestClose - acquisitionPrice;
+  const totalProfit = unitProfit * acquisitionShares;
+  return { unitProfit, totalProfit };
+}
+
 // 新規バッチジョブを開始する（対象はログイン中ユーザーのウォッチリスト全件）
 export async function startBatchJob(
   prisma: PrismaClient,
@@ -135,6 +153,14 @@ export async function processBatchJobChunk(prisma: PrismaClient, jobId: string, 
         atrLength: atrDays,
       });
 
+      // 保有損益（単価損益・損益合計）。取得単価・保有株数が未入力の銘柄はnullのまま。
+      // 取得単価・保有株数・取得日そのものはここでは一切変更しない（ユーザー入力を維持）。
+      const { unitProfit, totalProfit } = calculateHoldingProfit(
+        quotes,
+        item.acquisitionPrice,
+        item.acquisitionShares
+      );
+
       if (job.type === BatchJobType.SIGNAL_FETCH) {
         // クリック時点の上限日（JST 9:00〜翌8:59区切り）以下で最も新しい実在の取引日を求める。
         // 土日・祝日にクリックした場合は、直近営業日（例:金曜）の終値が対象になる。
@@ -149,6 +175,8 @@ export async function processBatchJobChunk(prisma: PrismaClient, jobId: string, 
               latestSignalType: latest.type,
               latestSignalDate: latestDate,
               latestSignalPrice: latest.price,
+              unitProfit,
+              totalProfit,
             },
           });
 
@@ -180,6 +208,8 @@ export async function processBatchJobChunk(prisma: PrismaClient, jobId: string, 
               latestSignalType: null,
               latestSignalDate: null,
               latestSignalPrice: null,
+              unitProfit,
+              totalProfit,
             },
           });
         }
@@ -202,6 +232,8 @@ export async function processBatchJobChunk(prisma: PrismaClient, jobId: string, 
             profitDraws: summary.draws,
             profitWinRate: summary.winRate,
             profitCalculatedAt: new Date(),
+            unitProfit,
+            totalProfit,
           },
         });
       }
