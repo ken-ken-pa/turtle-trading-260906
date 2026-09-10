@@ -123,6 +123,21 @@ export default function WatchlistPage() {
   // 共通ユーティリティ(lib/watchlist/sort.ts)のロジックをそのまま利用する
   const sortedItems = useMemo(() => applyWatchlistSort(items, sortKeys), [items, sortKeys]);
 
+  // 「表示」チェックが入っている銘柄について、ダッシュボードでの表示順（chartIndex）を算出する。
+  // ダッシュボード側は「dashboardSelected=trueの銘柄のみ、ウォッチリストと同じソート順」で並ぶため、
+  // ここでも同じsortedItemsから選択済み銘柄だけを抽出し、その順番をインデックスとして対応付ける
+  const dashboardChartIndexMap = useMemo(() => {
+    const map = new Map<string, number>();
+    let idx = 0;
+    for (const item of sortedItems) {
+      if (item.dashboardSelected) {
+        map.set(item.id, idx);
+        idx++;
+      }
+    }
+    return map;
+  }, [sortedItems]);
+
   // ── 銘柄追加 ──
   const handleAdd = async (symbol: string, name: string) => {
     const res = await fetch('/api/watchlist', {
@@ -456,11 +471,11 @@ export default function WatchlistPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
+    <div className="h-screen flex flex-col overflow-hidden bg-gray-950 text-white">
       <Navbar />
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        <h1 className="text-xl font-bold mb-4">ウォッチリスト</h1>
 
+      {/* 固定部分：戦略設定・ツールバー・進捗バー（スクロールしない） */}
+      <div className="flex-none max-w-7xl w-full mx-auto px-4 pt-4">
         {/* 設定パネル・ツールバー：lg（デスクトップ）以上はそのまま表示 */}
         <div className="hidden lg:block">
           {settings && (
@@ -482,13 +497,18 @@ export default function WatchlistPage() {
         </div>
 
         {activeJob && isBusy && <ProgressBar job={activeJob} />}
+      </div>
 
+      {/* スクロール部分：一覧の列見出し／簡易ソートバーは内部で固定し、データ行・カードのみがスクロールする
+          （WatchlistTable内部でヘッダー行をsticky指定しているため、この枠の高さが基準になる） */}
+      <div className="flex-1 min-h-0 max-w-7xl w-full mx-auto px-4 pb-4">
         {loading ? (
           <p className="text-gray-500">読み込み中...</p>
         ) : (
           <WatchlistTable
             items={sortedItems}
             sortKeys={sortKeys}
+            dashboardChartIndexMap={dashboardChartIndexMap}
             onSortClick={handleSortClick}
             onSortClearConfirm={handleSortClearConfirm}
             onSortClearCancel={handleSortClearCancel}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { WatchlistItem, SortKeyEntry } from './types';
 import { SORT_LABELS } from '@/lib/watchlist/sort';
 
@@ -12,6 +13,9 @@ type AcquisitionPatch = Partial<
 interface WatchlistTableProps {
   items: WatchlistItem[]; // 表示順（ソート適用済み or ベース順）に並んだ配列
   sortKeys: SortKeyEntry[]; // 複数列ソートの優先順位付き配列（先頭が第1優先。空配列＝ソートなし）
+  // 「表示」チェック済み銘柄について、ダッシュボードでの表示順（chartIndex）を引くためのマップ。
+  // 未選択の銘柄はこのマップに含まれない（＝コード部分はリンクにならない）
+  dashboardChartIndexMap: Map<string, number>;
   onSortClick: (key: SortKeyEntry['key']) => void; // 新規追加、または降順→昇順への遷移
   onSortClearConfirm: (key: SortKeyEntry['key']) => void; // ソート解除確認ポップアップで「はい」
   onSortClearCancel: (key: SortKeyEntry['key']) => void; // ソート解除確認ポップアップで「いいえ」（降順へ戻す）
@@ -26,9 +30,14 @@ const INTERVAL_SIGNAL_LABEL: Record<string, string> = {
   EXIT_LONG: 'Exit Long',
 };
 
+// カード表示（md・sm）内の各項目に共通で使う「小さなカード」スタイル。
+// 簡易ソートバーのボタンにも同系統の見た目（角丸・枠線・背景）を用いて統一感を出す
+const STAT_BOX_CLASS = 'bg-gray-800/50 border border-gray-700/40 rounded-lg p-2';
+
 export default function WatchlistTable({
   items,
   sortKeys,
+  dashboardChartIndexMap,
   onSortClick,
   onSortClearConfirm,
   onSortClearCancel,
@@ -191,14 +200,32 @@ export default function WatchlistTable({
   // カード表示（md・sm）向けの簡易ソートバー用に、全ソート対象キーのラベル一覧を生成
   const sortableFieldEntries = Object.entries(SORT_LABELS) as [SortKeyEntry['key'], string][];
 
+  // 「表示」チェック済みの銘柄コードをクリックすると、ダッシュボードの該当チャートへ移動する。
+  // 未選択の銘柄はリンクにせず、通常のテキストとして表示する
+  const renderSymbolLink = (item: WatchlistItem, className: string) => {
+    const chartIndex = dashboardChartIndexMap.get(item.id);
+    if (chartIndex === undefined) {
+      return <span className={className}>{item.symbol}</span>;
+    }
+    return (
+      <Link
+        href={`/dashboard?chartIndex=${chartIndex}`}
+        className={`${className} hover:text-blue-400 hover:underline transition`}
+        title="ダッシュボードで該当チャートを表示"
+      >
+        {item.symbol}
+      </Link>
+    );
+  };
+
   return (
-    <>
-      {/* デスクトップ表示（lg以上）：従来の表形式 */}
-      <div className="hidden lg:block bg-gray-900 rounded-xl border border-gray-800 overflow-hidden shadow-2xl">
-      <div className="overflow-x-auto">
+    <div className="h-full flex flex-col">
+      {/* デスクトップ表示（lg以上）：従来の表形式。列見出し行はsticky指定で内部固定し、データ行のみがスクロールする */}
+      <div className="hidden lg:flex lg:flex-col h-full bg-gray-900 rounded-xl border border-gray-800 overflow-hidden shadow-2xl">
+      <div className="flex-1 min-h-0 overflow-auto">
         <table className="w-full text-left border-collapse text-sm">
           <thead>
-            <tr className="border-b border-gray-800 bg-gray-950/50 text-gray-400 text-xs">
+            <tr className="sticky top-0 z-10 border-b border-gray-800 bg-gray-950 text-gray-400 text-xs">
               <th className="py-3 px-2 w-8"></th>
               <th className="py-3 px-2 font-semibold">
                 <HeaderButton label="表示" k="selected" />
@@ -206,7 +233,7 @@ export default function WatchlistTable({
               <th className="py-3 px-4 font-semibold">
                 <HeaderButton label="コード" k="symbol" />
               </th>
-              <th className="py-3 px-4 font-semibold">
+              <th className="py-3 px-4 font-semibold border-r border-gray-700/50">
                 <HeaderButton label="銘柄名" k="name" />
               </th>
               <th className="py-3 px-4 font-semibold">
@@ -215,7 +242,7 @@ export default function WatchlistTable({
               <th className="py-3 px-4 font-semibold">
                 <HeaderButton label="発生日" k="signalDate" />
               </th>
-              <th className="py-3 px-4 font-semibold">
+              <th className="py-3 px-4 font-semibold border-r border-gray-700/50">
                 <HeaderButton label="発生価格" k="signalPrice" />
               </th>
               <th className="py-3 px-4 font-semibold">
@@ -227,7 +254,7 @@ export default function WatchlistTable({
               <th className="py-3 px-4 font-semibold">
                 <HeaderButton label="平均損益" k="profitAvgProfit" />
               </th>
-              <th className="py-3 px-4 font-semibold">
+              <th className="py-3 px-4 font-semibold border-r border-gray-700/50">
                 <HeaderButton label="合計損益" k="profitTotalProfit" />
               </th>
               <th className="py-3 px-4 font-semibold">
@@ -292,8 +319,8 @@ export default function WatchlistTable({
                       onChange={(e) => onToggleSelect(item.id, e.target.checked)}
                     />
                   </td>
-                  <td className="py-2 px-4 font-mono">{item.symbol}</td>
-                  <td className="py-2 px-4">{item.name}</td>
+                  <td className="py-2 px-4 font-mono">{renderSymbolLink(item, '')}</td>
+                  <td className="py-2 px-4 border-r border-gray-800">{item.name}</td>
                   <td className="py-2 px-4">
                     {hasSignal ? (
                       <span
@@ -314,7 +341,7 @@ export default function WatchlistTable({
                       ? new Date(item.latestSignalDate).toISOString().split('T')[0]
                       : '-'}
                   </td>
-                  <td className="py-2 px-4 text-gray-400">
+                  <td className="py-2 px-4 text-gray-400 border-r border-gray-800">
                     {hasSignal && item.latestSignalPrice != null ? item.latestSignalPrice.toLocaleString() : '-'}
                   </td>
                   <td className="py-2 px-4">{item.profitCount ?? '-'}</td>
@@ -326,7 +353,7 @@ export default function WatchlistTable({
                       ? item.profitAvgProfit.toLocaleString(undefined, { maximumFractionDigits: 1 })
                       : '-'}
                   </td>
-                  <td className="py-2 px-4">
+                  <td className="py-2 px-4 border-r border-gray-800">
                     {item.profitTotalProfit != null ? item.profitTotalProfit.toLocaleString() : '-'}
                   </td>
                   <td className="py-2 px-4">
@@ -375,9 +402,9 @@ export default function WatchlistTable({
     </div>
 
     {/* モバイル・タブレット表示（lg未満）：カード形式 */}
-    <div className="lg:hidden">
-      {/* 簡易ソートバー：タップした項目でソートする（テーブルの列見出しクリックと同じ動作） */}
-      <div className="flex flex-wrap gap-1.5 mb-3">
+    <div className="lg:hidden h-full flex flex-col">
+      {/* 簡易ソートバー：タップした項目でソートする（テーブルの列見出しクリックと同じ動作）。固定表示（スクロールしない） */}
+      <div className="flex-none flex flex-wrap gap-1.5 mb-3">
         {sortableFieldEntries.map(([key, label]) => {
           const priorityIndex = sortKeys.findIndex((s) => s.key === key);
           const active = priorityIndex !== -1;
@@ -386,10 +413,10 @@ export default function WatchlistTable({
               key={key}
               type="button"
               onClick={(e) => handleHeaderClick(key, e)}
-              className={`px-2.5 py-1 rounded-full text-[11px] border transition ${
+              className={`px-2.5 py-1.5 rounded-lg text-[11px] border transition ${
                 active
                   ? 'bg-blue-600 border-blue-500 text-white font-bold'
-                  : 'bg-gray-800 border-gray-700 text-gray-400'
+                  : 'bg-gray-800/60 border-gray-700/50 text-gray-400'
               }`}
             >
               {label}
@@ -404,13 +431,15 @@ export default function WatchlistTable({
         })}
       </div>
 
-      {items.length === 0 && (
-        <div className="py-8 text-center text-gray-600 bg-gray-900 rounded-xl border border-gray-800">
-          ウォッチリストは空です
-        </div>
-      )}
+      {/* カード一覧：この枠内のみスクロールする */}
+      <div className="flex-1 min-h-0 overflow-y-auto pb-3">
+        {items.length === 0 && (
+          <div className="py-8 text-center text-gray-600 bg-gray-900 rounded-xl border border-gray-800">
+            ウォッチリストは空です
+          </div>
+        )}
 
-      <div className="space-y-3">
+        <div className="space-y-3">
         {items.map((item, index) => {
           const hasSignal = Boolean(item.latestSignalType);
           return (
@@ -450,7 +479,7 @@ export default function WatchlistTable({
                   checked={item.dashboardSelected}
                   onChange={(e) => onToggleSelect(item.id, e.target.checked)}
                 />
-                <span className="font-mono font-bold text-sm shrink-0">{item.symbol}</span>
+                <span className="shrink-0">{renderSymbolLink(item, 'font-mono font-bold text-sm')}</span>
                 <span className="text-sm text-gray-300 truncate flex-1">{item.name}</span>
                 <button
                   onClick={() => onDelete(item.id)}
@@ -460,43 +489,49 @@ export default function WatchlistTable({
                 </button>
               </div>
 
-              {/* シグナル行 */}
-              <div className="flex items-center gap-3 text-xs text-gray-400 mb-3 pb-3 border-b border-gray-800">
-                <span>
-                  シグナル:{' '}
-                  {hasSignal ? (
-                    <span
-                      className={item.latestSignalType === 'LONG_ENTRY' ? 'text-green-400' : 'text-red-400'}
-                    >
-                      {INTERVAL_SIGNAL_LABEL[item.latestSignalType!] ?? item.latestSignalType}
-                    </span>
-                  ) : (
-                    <span className="text-gray-600">-</span>
-                  )}
-                </span>
-                {hasSignal && (
-                  <>
-                    <span>
-                      {item.latestSignalDate ? new Date(item.latestSignalDate).toISOString().split('T')[0] : '-'}
-                    </span>
-                    <span>
-                      {item.latestSignalPrice != null ? item.latestSignalPrice.toLocaleString() : '-'}
-                    </span>
-                  </>
-                )}
-              </div>
-
-              {/* Long Profit集計：件数・勝率・平均損益・合計損益（デスクトップ表と同じ並び順） */}
-              <div className="grid grid-cols-4 gap-2 text-xs mb-3 pb-3 border-b border-gray-800">
-                <div>
+              {/* シグナル・発生日・発生価格・件数（4列。すべて同じラベル+値のカード形式で統一） */}
+              <div className="grid grid-cols-4 gap-2 text-xs mb-2">
+                <div className={STAT_BOX_CLASS}>
+                  <div className="text-[10px] text-gray-500 mb-0.5">シグナル</div>
+                  <div>
+                    {hasSignal ? (
+                      <span
+                        className={item.latestSignalType === 'LONG_ENTRY' ? 'text-green-400' : 'text-red-400'}
+                      >
+                        {INTERVAL_SIGNAL_LABEL[item.latestSignalType!] ?? item.latestSignalType}
+                      </span>
+                    ) : (
+                      '-'
+                    )}
+                  </div>
+                </div>
+                <div className={STAT_BOX_CLASS}>
+                  <div className="text-[10px] text-gray-500 mb-0.5">発生日</div>
+                  <div>
+                    {hasSignal && item.latestSignalDate
+                      ? new Date(item.latestSignalDate).toISOString().split('T')[0]
+                      : '-'}
+                  </div>
+                </div>
+                <div className={STAT_BOX_CLASS}>
+                  <div className="text-[10px] text-gray-500 mb-0.5">発生価格</div>
+                  <div>
+                    {hasSignal && item.latestSignalPrice != null ? item.latestSignalPrice.toLocaleString() : '-'}
+                  </div>
+                </div>
+                <div className={STAT_BOX_CLASS}>
                   <div className="text-[10px] text-gray-500 mb-0.5">件数</div>
                   <div>{item.profitCount ?? '-'}</div>
                 </div>
-                <div>
+              </div>
+
+              {/* 勝率・平均損益・合計損益（3列） */}
+              <div className="grid grid-cols-3 gap-2 text-xs mb-3 pb-3 border-b border-gray-800">
+                <div className={STAT_BOX_CLASS}>
                   <div className="text-[10px] text-gray-500 mb-0.5">勝率</div>
                   <div>{item.profitWinRate != null ? `${Math.round(item.profitWinRate * 100)}%` : '-'}</div>
                 </div>
-                <div>
+                <div className={STAT_BOX_CLASS}>
                   <div className="text-[10px] text-gray-500 mb-0.5">平均損益</div>
                   <div className="font-mono">
                     {item.profitAvgProfit != null
@@ -504,7 +539,7 @@ export default function WatchlistTable({
                       : '-'}
                   </div>
                 </div>
-                <div>
+                <div className={STAT_BOX_CLASS}>
                   <div className="text-[10px] text-gray-500 mb-0.5">合計損益</div>
                   <div className="font-mono">
                     {item.profitTotalProfit != null ? item.profitTotalProfit.toLocaleString() : '-'}
@@ -514,15 +549,15 @@ export default function WatchlistTable({
 
               {/* 保有ポジション情報：取得単価・保有株数・取得日 */}
               <div className="grid grid-cols-3 gap-2 mb-3">
-                <div>
+                <div className={STAT_BOX_CLASS}>
                   <div className="text-[10px] text-gray-500 mb-1">取得単価</div>
                   {renderNumberCell(item, 'acquisitionPrice', item.acquisitionPrice, true)}
                 </div>
-                <div>
+                <div className={STAT_BOX_CLASS}>
                   <div className="text-[10px] text-gray-500 mb-1">保有株数</div>
                   {renderNumberCell(item, 'acquisitionShares', item.acquisitionShares, true)}
                 </div>
-                <div>
+                <div className={STAT_BOX_CLASS}>
                   <div className="text-[10px] text-gray-500 mb-1">取得日</div>
                   <input
                     type="date"
@@ -537,13 +572,13 @@ export default function WatchlistTable({
 
               {/* 保有損益：単価損益・損益合計 */}
               <div className="grid grid-cols-2 gap-2 text-xs">
-                <div>
+                <div className={STAT_BOX_CLASS}>
                   <div className="text-[10px] text-gray-500 mb-0.5">単価損益</div>
                   <div className="font-mono">
                     {item.unitProfit != null ? item.unitProfit.toLocaleString() : '-'}
                   </div>
                 </div>
-                <div>
+                <div className={STAT_BOX_CLASS}>
                   <div className="text-[10px] text-gray-500 mb-0.5">損益合計</div>
                   <div className="font-mono">
                     {item.totalProfit != null ? item.totalProfit.toLocaleString() : '-'}
@@ -553,6 +588,7 @@ export default function WatchlistTable({
             </div>
           );
         })}
+        </div>
       </div>
     </div>
 
@@ -593,6 +629,6 @@ export default function WatchlistTable({
         </div>
       </>
     )}
-    </>
+    </div>
   );
 }

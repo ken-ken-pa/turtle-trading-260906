@@ -7,7 +7,7 @@ interface ProgressBarProps {
 }
 
 const LABELS: Record<BatchJob['type'], string> = {
-  SIGNAL_FETCH: '最新シグナル取得',
+  SIGNAL_FETCH: 'シグナル取得',
   PROFIT_AGGREGATION: 'Long Profit集計取得',
 };
 
